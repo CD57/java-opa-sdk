@@ -116,10 +116,12 @@ class ProtoBundleParityTest {
   void decodedManifestMatchesJsonManifest() {
     Store store = new InMem();
     Bundle proto = new FileSystemBundleLoader("proto", PROTO_BUNDLE).load(store);
+    Bundle json = new FileSystemBundleLoader("json", JSON_BUNDLE).load(new InMem());
 
-    assertThat(proto.manifest).containsEntry("revision", "");
-    assertThat(proto.manifest).containsEntry("roots", List.of(""));
-    assertThat(((Number) proto.manifest.get("rego_version")).intValue()).isEqualTo(1);
+    assertThat(proto.manifest).isEqualTo(json.manifest);
+    assertThat(proto.manifest.getRevision()).isEmpty();
+    assertThat(proto.manifest.getRoots()).containsExactly("");
+    assertThat(proto.manifest.getRegoVersion()).isEqualTo(1);
   }
 
   @Test
