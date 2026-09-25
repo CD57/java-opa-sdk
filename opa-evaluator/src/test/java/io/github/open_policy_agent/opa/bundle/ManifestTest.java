@@ -101,9 +101,6 @@ class ManifestTest {
         () -> Manifest.fromMap(Map.of("rego_version", 1.5)));
     assertThrows(
         IllegalArgumentException.class,
-        () -> Manifest.fromMap(Map.of("rego_version", 1.0)));
-    assertThrows(
-        IllegalArgumentException.class,
         () -> Manifest.fromMap(Map.of("file_rego_versions", Map.of("/policy.rego", "one"))));
     assertThrows(
         IllegalArgumentException.class,
@@ -177,6 +174,29 @@ class ManifestTest {
         () -> Manifest.fromMap(Map.of("rego_version", BigInteger.ONE.shiftLeft(64))));
     assertThrows(IllegalArgumentException.class,
         () -> Manifest.fromMap(Map.of("rego_version", Long.MAX_VALUE)));
+    for (Number value : List.of(1.5d, 1.5f, new BigDecimal("1.0000000000000000001"),
+        2147483648d, -2147483649d, new BigDecimal("2147483648"))) {
+      assertThrows(IllegalArgumentException.class,
+          () -> Manifest.fromMap(Map.of("rego_version", value)));
+      assertThrows(IllegalArgumentException.class,
+          () -> Manifest.fromMap(Map.of("file_rego_versions", Map.of("/policy.rego", value))));
+    }
+    for (int bound : List.of(Integer.MIN_VALUE, Integer.MAX_VALUE)) {
+      assertEquals(bound, Manifest.fromMap(Map.of("rego_version", (double) bound)).getRegoVersion());
+    }
+  }
+
+  @Test
+  void acceptsIntegralNumbersFromDifferentJsonProviders() {
+    Manifest expected = Manifest.fromMap(Map.of("rego_version", 1, "file_rego_versions", Map.of("/policy.rego", 1)));
+    for (Number value : List.of((byte) 1, (short) 1, 1, 1L, BigInteger.ONE, 1.0d, 1.0f, new BigDecimal("1.00"))) {
+      Manifest manifest = Manifest.fromMap(Map.of("rego_version", value, "file_rego_versions", Map.of("/policy.rego", value)));
+      assertEquals(1, manifest.getRegoVersion());
+      assertEquals(Map.of("/policy.rego", 1), manifest.getFileRegoVersions());
+      assertEquals(expected, manifest);
+      assertEquals(expected.hashCode(), manifest.hashCode());
+      assertEquals(value, manifest.asMap().get("rego_version"));
+    }
   }
 
   @Test
@@ -223,13 +243,16 @@ class ManifestTest {
   }
 
   @Test
-  void equalityUsesRawRepresentation() {
+  void equalityUsesDefaultedFieldsAndPreservesRawRepresentation() {
     Manifest defaulted = Manifest.fromMap(Map.of());
     Manifest explicit = Manifest.fromMap(Map.of("roots", List.of("")));
     Manifest same = Manifest.fromMap(new LinkedHashMap<>(Map.of("roots", List.of(""))));
 
     assertEquals(defaulted.getRoots(), explicit.getRoots());
-    assertNotEquals(defaulted, explicit);
+    assertEquals(defaulted, explicit);
+    assertEquals(defaulted.hashCode(), explicit.hashCode());
+    assertNotEquals(defaulted.asMap(), explicit.asMap());
+    assertNotEquals(defaulted, Manifest.fromMap(Map.of("roots", List.of())));
     assertEquals(explicit, same);
     assertEquals(explicit.hashCode(), same.hashCode());
     assertEquals(explicit, explicit);
@@ -238,12 +261,55 @@ class ManifestTest {
   }
 
   @Test
+  void equalityIncludesExtensionsAndDefaultsNullFields() {
+    Manifest empty = Manifest.fromMap(Map.of());
+    Map<String, Object> nullFields = new LinkedHashMap<>();
+    for (String field : List.of("revision", "roots", "wasm", "rego_version", "file_rego_versions", "metadata", "default_decision")) {
+      nullFields.put(field, null);
+    }
+    Manifest nulls = Manifest.fromMap(nullFields);
+    assertEquals(empty, nulls);
+    assertEquals(empty.hashCode(), nulls.hashCode());
+    assertNotEquals(empty, Manifest.fromMap(Map.of("extension", true)));
+    assertNotEquals(Manifest.fromMap(Map.of("extension", true)), Manifest.fromMap(Map.of("extension", false)));
+  }
+
+  @Test
+  void wasmEqualityUsesDefaultedFieldsAndRetainsExtensions() {
+    Manifest omitted = Manifest.fromMap(Map.of("wasm", List.of(Map.of("extension", true))));
+    Map<String, Object> nullFields = new LinkedHashMap<>();
+    nullFields.put("extension", true);
+    for (String field : List.of("entrypoint", "module", "annotations")) {
+      nullFields.put(field, null);
+    }
+    for (Map<String, Object> fields : List.of(nullFields,
+        Map.<String, Object>of("entrypoint", "", "module", "", "annotations", List.of(), "extension", true))) {
+      Manifest explicit = Manifest.fromMap(Map.of("wasm", List.of(fields)));
+      assertEquals(omitted, explicit);
+      assertEquals(omitted.hashCode(), explicit.hashCode());
+      assertEquals(omitted.getWasm().get(0), explicit.getWasm().get(0));
+      assertEquals(omitted.getWasm().get(0).hashCode(), explicit.getWasm().get(0).hashCode());
+      assertEquals(fields, explicit.getWasm().get(0).asMap());
+    }
+    for (Map<String, Object> fields : List.of(Map.<String, Object>of(), Map.<String, Object>of("extension", false),
+        Map.<String, Object>of("extension", true, "entrypoint", "authz/allow"),
+        Map.<String, Object>of("extension", true, "module", "/policy.wasm"),
+        Map.<String, Object>of("extension", true, "annotations", List.of(Map.of("title", "Allow"))))) {
+      assertNotEquals(omitted, Manifest.fromMap(Map.of("wasm", List.of(fields))));
+    }
+  }
+
+  @Test
   void rejectsMutableAndNonJsonNumbers() {
     assertThrows(IllegalArgumentException.class,
         () -> Manifest.fromMap(Map.of("metadata", Map.of("number", new AtomicInteger(1)))));
-    assertThrows(IllegalArgumentException.class,
-        () -> Manifest.fromMap(Map.of("metadata", Map.of("number", Double.NaN))));
-    assertThrows(IllegalArgumentException.class,
-        () -> Manifest.fromMap(Map.of("metadata", Map.of("number", Double.POSITIVE_INFINITY))));
+    for (Number value : List.of(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+        Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+      for (String field : List.of("metadata", "extension")) {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> Manifest.fromMap(Map.of(field, Map.of("nested", List.of(value)))));
+        assertEquals("Manifest values must be finite numbers, got " + value, error.getMessage());
+      }
+    }
   }
 }

@@ -17,6 +17,9 @@ import java.util.Set;
  * changing the original fields retained by {@link #asMap()}; null collection elements decode to their
  * zero value as Go does. Bundle activation, root ownership, delta patches and signatures are
  * bundle-level concerns in OPA rather than manifest fields, and are handled separately.
+ *
+ * <p>Equality compares defaulted typed fields and retained extensions; {@link #asMap()} preserves
+ * the original field presence. All exposed collections, including nested values, are immutable.
  */
 public final class Manifest {
 
@@ -57,14 +60,7 @@ public final class Manifest {
     this.metadata = optionalObject(properties, METADATA);
     this.defaultDecision = optionalString(properties, DEFAULT_DECISION);
 
-    Map<String, Object> additional = new LinkedHashMap<>();
-    properties.forEach(
-        (name, value) -> {
-          if (!KNOWN_FIELDS.contains(name)) {
-            additional.put(name, value);
-          }
-        });
-    this.additionalProperties = Collections.unmodifiableMap(additional);
+    this.additionalProperties = additionalProperties(properties, KNOWN_FIELDS);
   }
 
   /** Create a manifest from a plain JSON-compatible object tree. */
@@ -73,7 +69,10 @@ public final class Manifest {
     return new Manifest(properties);
   }
 
-  /** Return the bundle revision, defaulting to an empty string when omitted or null. */
+  /**
+   * Return the bundle revision, defaulting to an empty string when omitted or
+   * null.
+   */
   public String getRevision() {
     return revision;
   }
@@ -84,9 +83,12 @@ public final class Manifest {
   }
 
   /**
-   * Return the declared roots, defaulting to the global root ({@code [""]}) when omitted or null.
+   * Return the declared roots, defaulting to the global root ({@code [""]}) when
+   * omitted or null.
    *
-   * <p>An explicitly empty array remains empty. Paths are not normalized or validated here.
+   * <p>
+   * An explicitly empty array remains empty. Paths are not normalized or
+   * validated here.
    */
   public List<String> getRoots() {
     return roots;
@@ -97,7 +99,9 @@ public final class Manifest {
     return wasm;
   }
 
-  /** Return the bundle-wide Rego version, or {@code null} when omitted or null. */
+  /**
+   * Return the bundle-wide Rego version, or {@code null} when omitted or null.
+   */
   public Integer getRegoVersion() {
     return regoVersion;
   }
@@ -112,12 +116,17 @@ public final class Manifest {
     return metadata;
   }
 
-  /** Return the SDK-specific default decision, or {@code null} when omitted or null. */
+  /**
+   * Return the SDK-specific default decision, or {@code null} when omitted or
+   * null.
+   */
   public String getDefaultDecision() {
     return defaultDecision;
   }
 
-  /** Return unknown top-level manifest fields retained for forward compatibility. */
+  /**
+   * Return unknown top-level manifest fields retained for forward compatibility.
+   */
   public Map<String, Object> getAdditionalProperties() {
     return additionalProperties;
   }
@@ -135,12 +144,20 @@ public final class Manifest {
     if (!(other instanceof Manifest that)) {
       return false;
     }
-    return properties.equals(that.properties);
+    return revision.equals(that.revision)
+        && roots.equals(that.roots)
+        && wasm.equals(that.wasm)
+        && Objects.equals(regoVersion, that.regoVersion)
+        && fileRegoVersions.equals(that.fileRegoVersions)
+        && Objects.equals(metadata, that.metadata)
+        && Objects.equals(defaultDecision, that.defaultDecision)
+        && additionalProperties.equals(that.additionalProperties);
   }
 
   @Override
   public int hashCode() {
-    return properties.hashCode();
+    return Objects.hash(revision, roots, wasm, regoVersion, fileRegoVersions, metadata, defaultDecision,
+        additionalProperties);
   }
 
   @Override
@@ -150,7 +167,10 @@ public final class Manifest {
 
   /** Immutable Wasm module-to-entrypoint mapping. */
   public static final class WasmResolver {
+    private static final Set<String> KNOWN_FIELDS = Set.of("entrypoint", "module", "annotations");
+
     private final Map<String, Object> properties;
+    private final Map<String, Object> additionalProperties;
     private final String entrypoint;
     private final String module;
     private final List<Map<String, Object>> annotations;
@@ -160,19 +180,27 @@ public final class Manifest {
       this.entrypoint = Objects.requireNonNullElse(optionalString(properties, "entrypoint"), "");
       this.module = Objects.requireNonNullElse(optionalString(properties, "module"), "");
       this.annotations = optionalObjectList(properties, "annotations");
+      this.additionalProperties = additionalProperties(properties, KNOWN_FIELDS);
     }
 
-    /** Return the entrypoint, defaulting to an empty string when omitted or null. */
+    /**
+     * Return the entrypoint, defaulting to an empty string when omitted or null.
+     */
     public String getEntrypoint() {
       return entrypoint;
     }
 
-    /** Return the module path, defaulting to an empty string when omitted or null. */
+    /**
+     * Return the module path, defaulting to an empty string when omitted or null.
+     */
     public String getModule() {
       return module;
     }
 
-    /** Return annotation objects (null entries decode to empty maps); their fields remain untyped. */
+    /**
+     * Return annotation objects (null entries decode to empty maps); their fields
+     * remain untyped.
+     */
     public List<Map<String, Object>> getAnnotations() {
       return annotations;
     }
@@ -184,18 +212,34 @@ public final class Manifest {
 
     @Override
     public boolean equals(Object other) {
-      return other instanceof WasmResolver that && properties.equals(that.properties);
+      return other instanceof WasmResolver that
+          && entrypoint.equals(that.entrypoint)
+          && module.equals(that.module)
+          && annotations.equals(that.annotations)
+          && additionalProperties.equals(that.additionalProperties);
     }
 
     @Override
     public int hashCode() {
-      return properties.hashCode();
+      return Objects.hash(entrypoint, module, annotations, additionalProperties);
     }
 
     @Override
     public String toString() {
       return properties.toString();
     }
+  }
+
+  private static Map<String, Object> additionalProperties(
+      Map<String, Object> properties, Set<String> knownFields) {
+    Map<String, Object> additional = new LinkedHashMap<>();
+    properties.forEach(
+        (name, value) -> {
+          if (!knownFields.contains(name)) {
+            additional.put(name, value);
+          }
+        });
+    return Collections.unmodifiableMap(additional);
   }
 
   private static String optionalString(Map<String, Object> source, String field) {
@@ -218,18 +262,13 @@ public final class Manifest {
   }
 
   private static Integer requireInteger(String field, Object value) {
-    if (!(value instanceof Byte)
-        && !(value instanceof Short)
-        && !(value instanceof Integer)
-        && !(value instanceof Long)
-        && !(value instanceof BigInteger)) {
+    if (!(value instanceof Number number)) {
       throw wrongType(field, "integer", value);
     }
     try {
-      return value instanceof BigInteger integer
-          ? integer.intValueExact()
-          : Math.toIntExact(((Number) value).longValue());
-    } catch (ArithmeticException e) {
+      // JSON providers may represent an integral JSON number as a floating-point value.
+      return new BigDecimal(number.toString()).intValueExact();
+    } catch (ArithmeticException | NumberFormatException e) {
       throw wrongType(field, "32-bit integer", value);
     }
   }
@@ -329,6 +368,9 @@ public final class Manifest {
         || (value instanceof Double number && Double.isFinite(number))
         || value instanceof Boolean) {
       return value;
+    }
+    if (value instanceof Float || value instanceof Double) {
+      throw new IllegalArgumentException("Manifest values must be finite numbers, got " + value);
     }
     throw new IllegalArgumentException(
         "Manifest values must use JSON-compatible types, got " + value.getClass().getSimpleName());

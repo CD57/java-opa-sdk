@@ -29,7 +29,8 @@ class ProtoBundleReaderTest {
         .decodeManifest(new ByteArrayInputStream(proto.toByteArray())))
         .isInstanceOf(IOException.class)
         .hasCauseInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("malformed proto manifest");
+        .hasMessageContaining("malformed proto manifest")
+        .hasMessageContaining("Manifest values must be finite numbers, got NaN");
   }
 
   @Test
